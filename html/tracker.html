@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Mareike Response Tracker</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/css/index.css">
+</head>
+<body>
+    <div class="user-info">
+        Welcome, <span id="loggedInUsername">loading...</span>
+        <button id="logoutBtn">Logout</button>
+    </div>
+    <div class="floating-shapes" id="floating-shapes"></div>
+
+    <div class="container">
+        <div class="header">
+            <h1>Mareike Response Tracker</h1>
+            <p class="subtitle">Track response times and calculate the weekly average</p>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" id="weekAverage">--</div>
+                <div class="stat-label">Weekly Average</div>
+                <div class="stat-description">Average response time for the last 7 days</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalEntries">0</div>
+                <div class="stat-label">Entries</div>
+                <div class="stat-description">Number of saved messages</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="fastestResponse">--</div>
+                <div class="stat-label">Fastest Response</div>
+                <div class="stat-description">Shortest response time of all time</div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="form-section">
+                <h2>Add New Message</h2>
+                <form id="messageForm">
+                    <div class="form-group">
+                        <label for="sentTime">Message sent at:</label>
+                        <input type="datetime-local" id="sentTime" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="receivedTime">Response received at:</label>
+                        <input type="datetime-local" id="receivedTime" required>
+                    </div>
+                    <button type="submit" class="btn">Add Entry</button>
+                </form>
+            </div>
+
+            <div class="entries-section">
+                <h3>Latest Entries</h3>
+                <div id="entriesList">
+                    <div class="no-entries" id="noEntriesMessage">
+                        No entries yet.<br>
+                        Add your first message!
+                    </div>
+                    </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyDk5aIZU5WctWYyHLvX647gbK8ap9dD2-I",
+            authDomain: "mareikeonlinetimes.firebaseapp.com",
+            projectId: "mareikeonlinetimes",
+            storageBucket: "mareikeonlinetimes.firebasestorage.app",
+            messagingSenderId: "17299629415",
+            appId: "1:17299629415:web:61ae9d2ff7e3e171893bc2",
+            measurementId: "G-SYN4P8W89N"
+        };
+
+        const app = firebase.initializeApp(firebaseConfig);
+        const db = app.firestore();
+        const auth = app.auth(); 
+
+        const messageForm = document.getElementById('messageForm');
+        const sentTimeInput = document.getElementById('sentTime');
+        const receivedTimeInput = document.getElementById('receivedTime');
+        const entriesList = document.getElementById('entriesList');
+        const noEntriesMessage = document.getElementById('noEntriesMessage');
+
+        const weekAverageSpan = document.getElementById('weekAverage');
+        const totalEntriesSpan = document.getElementById('totalEntries');
+        const fastestResponseSpan = document.getElementById('fastestResponse');
+
+        function formatDuration(milliseconds) {
+            if (milliseconds === null || isNaN(milliseconds)) {
+            return "--";
+            }
+            const totalMinutes = Math.round(milliseconds / 60000);
+            const hours = Math.floor(totalMinutes / 60);
+            const minutes = totalMinutes % 60;
+            if (hours > 0) {
+            return `${hours}h ${minutes}m`;
+            }
+            return `${minutes}m`;
+        }
+
+        async function addMessage(sentTime, receivedTime) {
+            try {
+                const responseTimeMs = receivedTime.getTime() - sentTime.getTime();
+
+                await db.collection("messages").add({
+                    sentAt: firebase.firestore.Timestamp.fromDate(sentTime),
+                    receivedAt: firebase.firestore.Timestamp.fromDate(receivedTime),
+                    responseTimeMs: responseTimeMs,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                console.log("Added message!");
+                messageForm.reset();
+            } catch (e) {
+                console.error("Error while adding message: ", e);
+                alert("Error while adding message, please try again.");
+            }
+        }
+
+        async function deleteEntry(docId) {
+            if (confirm("Are you sure you want to delete the entry?")) {
+                try {
+                    await db.collection("messages").doc(docId).delete();
+                    console.log("Entry deleted.");
+                } catch (e) {
+                    console.error("Error while deleting entry: ", e);
+                    alert("Error while deleting entry, please try again.");
+                }
+            }
+        }
+
+        const loggedInUsernameSpan = document.getElementById('loggedInUsername');
+        const logoutButton = document.getElementById('logoutBtn');
+
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                const username = localStorage.getItem('currentUsername') || user.displayName || 'Unbekannt';
+                loggedInUsernameSpan.textContent = username;
+            } else {
+                console.log("No user is logged in. Redirecting to login page.");
+                window.location.href = '/index.html';
+            }
+        });
+
+        logoutButton.addEventListener('click', async () => {
+            try {
+                await auth.signOut();
+                localStorage.removeItem('currentUsername'); 
+                console.log("User logged out.");
+                window.location.href = '/index.html';
+            } catch (error) {
+                console.error("Error during logout:", error);
+                alert("Error during logout. Please try again.");
+            }
+        });
+
+        function renderEntries(messages) {
+            entriesList.innerHTML = '';
+
+            if (messages.length === 0) {
+                noEntriesMessage.style.display = 'block';
+            } else {
+                noEntriesMessage.style.display = 'none';
+                messages.forEach((msg, idx) => {
+                    const entryDiv = document.createElement('div');
+                    entryDiv.classList.add('entry-card');
+
+                    const sentDate = msg.sentAt.toDate();
+                    const receivedDate = msg.receivedAt.toDate();
+
+                    entryDiv.innerHTML = `
+                        <div class="entry-header">
+                            <span class="entry-date">${sentDate.toLocaleDateString()}</span>
+                            <button class="delete-btn" data-id="${msg.id}">x</button>
+                        </div>
+                        <div class="entry-details">
+                            <p><strong>Sent:</strong> ${sentDate.toLocaleDateString()} @ ${sentDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                            <p><strong>Received:</strong> ${receivedDate.toLocaleDateString()} @ ${receivedDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                            <p><strong>Response Time:</strong> ${formatDuration(msg.responseTimeMs)}</p>
+                        </div>
+                    `;
+
+                    entriesList.appendChild(entryDiv);
+
+                    if (idx < messages.length - 1) {
+                        const separator = document.createElement('hr');
+                        separator.className = 'entry-separator';
+                        separator.style.border = 'none';
+                        separator.style.height = '2px';
+                        separator.style.background = 'linear-gradient(90deg, #a1c4fd 0%, #c2e9fb 100%)';
+                        separator.style.margin = '24px 0';
+                        separator.style.width = '100%';
+                        separator.style.alignSelf = 'center';
+                        separator.style.borderRadius = '1px';
+                        entriesList.appendChild(separator);
+                    }
+                });
+
+                document.querySelectorAll('.delete-btn').forEach(button => {
+                    button.addEventListener('click', (event) => {
+                        const docId = event.target.dataset.id;
+                        deleteEntry(docId);
+                    });
+                });
+            }
+        }
+
+        function updateStatistics(messages) {
+            totalEntriesSpan.textContent = messages.length;
+
+            if (messages.length === 0) {
+                weekAverageSpan.textContent = '--';
+                fastestResponseSpan.textContent = '--';
+                return;
+            }
+
+            let totalResponseTimeMs = 0;
+            let fastestResponseMs = Infinity; 
+
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+            let weeklyResponseTimeSum = 0;
+            let weeklyEntryCount = 0;
+
+            messages.forEach(msg => {
+                const responseTime = msg.responseTimeMs;
+
+                if (responseTime < fastestResponseMs) {
+                    fastestResponseMs = responseTime;
+                }
+
+                if (msg.createdAt && msg.createdAt.toDate() >= sevenDaysAgo) {
+                    weeklyResponseTimeSum += responseTime;
+                    weeklyEntryCount++;
+                }
+            });
+
+            if (weeklyEntryCount > 0) {
+                weekAverageSpan.textContent = formatDuration(weeklyResponseTimeSum / weeklyEntryCount);
+            } else {
+                weekAverageSpan.textContent = '--';
+            }
+            fastestResponseSpan.textContent = formatDuration(fastestResponseMs);
+        }
+
+        messageForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            const sentTimeStr = sentTimeInput.value;
+            const receivedTimeStr = receivedTimeInput.value;
+
+            if (!sentTimeStr || !receivedTimeStr) {
+                alert("Please enter a send and anwser time.");
+                return;
+            }
+
+            const sentTime = new Date(sentTimeStr);
+            const receivedTime = new Date(receivedTimeStr);
+
+            if (receivedTime <= sentTime) {
+                alert("The received time has to be after the send time.");
+                return;
+            }
+
+            await addMessage(sentTime, receivedTime);
+        });
+
+        db.collection("messages").orderBy("createdAt", "desc")
+            .onSnapshot((snapshot) => {
+                const messages = [];
+                snapshot.forEach(doc => {
+                    messages.push({ id: doc.id, ...doc.data() });
+                });
+
+                renderEntries(messages);
+                updateStatistics(messages);
+            }, (error) => {
+                console.error("Error while loading messages: ", error);
+                alert("Error while loading messages, try again or check your internet connection.");
+            });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const floatingShapesContainer = document.getElementById('floating-shapes');
+            if (floatingShapesContainer) {
+                for (let i = 0; i < 10; i++) {
+                    const shape = document.createElement('div');
+                    shape.classList.add('shape');
+                    shape.style.left = `${Math.random() * 100}%`;
+                    shape.style.top = `${Math.random() * 100}%`;
+                    shape.style.width = `${20 + Math.random() * 80}px`;
+                    shape.style.height = shape.style.width;
+                    shape.style.animationDuration = `${5 + Math.random() * 10}s`;
+                    shape.style.animationDelay = `${Math.random() * 5}s`;
+                    floatingShapesContainer.appendChild(shape);
+                }
+            }
+        });
+
+    </script>
+    <script src="/static/js/script.js"></script> </body>
+</html>
